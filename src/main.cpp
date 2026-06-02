@@ -13,7 +13,9 @@ Renderer renderer(tft);
 
 uint32_t lastTickMs = 0;
 uint32_t lastBacklightReassertMs = 0;
+uint32_t splashStartMs = 0;
 bool gameStarted = false;
+bool splashActive = true;
 
 void setup() {
   Serial.begin(115200);
@@ -24,10 +26,11 @@ void setup() {
   renderer.begin();
   input.begin();
   game.begin();
-  renderer.draw(game);
+  renderer.drawStartupSplash();
 
   lastTickMs = millis();
   lastBacklightReassertMs = lastTickMs;
+  splashStartMs = lastTickMs;
 }
 
 void loop() {
@@ -39,6 +42,17 @@ void loop() {
   }
 
   input.update();
+
+  if (splashActive) {
+    if (now - splashStartMs < STARTUP_SPLASH_MS) {
+      return;
+    }
+
+    splashActive = false;
+    if (!DEBUG_DISABLE_GAME_RENDER) {
+      renderer.draw(game);
+    }
+  }
 
   if (game.isGameOver()) {
     if (input.directionAvailable()) {
@@ -71,8 +85,8 @@ void loop() {
     return;
   }
 
-  if (now - lastTickMs >= GAME_TICK_MS) {
-    lastTickMs += GAME_TICK_MS;
+  if (now - lastTickMs >= game.currentTickMs()) {
+    lastTickMs += game.currentTickMs();
     game.update();
     if (!DEBUG_DISABLE_GAME_RENDER) {
       renderer.draw(game);

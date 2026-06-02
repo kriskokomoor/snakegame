@@ -9,6 +9,7 @@ public:
   explicit Renderer(TFT_eSPI& tft);
 
   void begin();
+  void drawStartupSplash();
   void draw(const Game& game);
 
 private:

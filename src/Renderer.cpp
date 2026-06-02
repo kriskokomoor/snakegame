@@ -25,6 +25,42 @@ void Renderer::begin() {
   tft_.setTextWrap(false);
 }
 
+void Renderer::drawStartupSplash() {
+  tft_.fillScreen(TFT_BLACK);
+  tft_.drawRoundRect(8, 8, SCREEN_WIDTH - 16, SCREEN_HEIGHT - 16, 8, TFT_MAGENTA);
+  tft_.drawRoundRect(12, 12, SCREEN_WIDTH - 24, SCREEN_HEIGHT - 24, 6, TFT_YELLOW);
+
+  tft_.fillCircle(48, 48, 7, TFT_RED);
+  tft_.fillCircle(272, 192, 7, TFT_RED);
+
+  for (int i = 0; i < 6; ++i) {
+    const int x = 84 + i * 16;
+    const int y = 164 + (i % 2) * 6;
+    tft_.fillRoundRect(x, y, 14, 14, 4, i == 0 ? TFT_GREENYELLOW : TFT_GREEN);
+  }
+
+  tft_.setTextFont(1);
+  tft_.setTextColor(TFT_YELLOW, TFT_BLACK);
+  tft_.setTextSize(3);
+  tft_.setCursor(32, 54);
+  tft_.print("Happy Birthday");
+  tft_.setCursor(74, 86);
+  tft_.print("Rachael!");
+
+  tft_.setTextColor(TFT_CYAN, TFT_BLACK);
+  tft_.setTextSize(2);
+  tft_.setCursor(100, 126);
+  tft_.print("Snake Game");
+
+  tft_.setTextColor(TFT_WHITE, TFT_BLACK);
+  tft_.setTextSize(1);
+  tft_.setCursor(94, 208);
+  tft_.print("Press a direction to start");
+
+  initialized_ = false;
+  previousGameOver_ = false;
+}
+
 void Renderer::draw(const Game& game) {
   if (DEBUG_LOG_RENDER_DRAWS) {
     Serial.print("Renderer::draw at ms=");

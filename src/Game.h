@@ -32,9 +32,11 @@ public:
   const Cell* snake() const;
   int snakeLength() const;
   Cell food() const;
+  uint32_t currentTickMs() const;
 
 private:
   void placeFood();
+  void increaseSpeed();
   Cell bodyOffset(Direction direction) const;
   bool isSnakeCell(int8_t x, int8_t y) const;
   bool isOpposite(Direction a, Direction b) const;
@@ -45,5 +47,6 @@ private:
   Direction direction_;
   Direction nextDirection_;
   int score_;
+  uint32_t currentTickMs_;
   bool gameOver_;
 };

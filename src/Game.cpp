@@ -31,6 +31,7 @@ void Game::restart(Direction initialDirection) {
   direction_ = initialDirection;
   nextDirection_ = direction_;
   score_ = 0;
+  currentTickMs_ = INITIAL_GAME_TICK_MS;
   gameOver_ = false;
   placeFood();
 }
@@ -72,7 +73,9 @@ bool Game::update() {
     }
   }
 
-  const int newLength = ateFood ? snakeLength_ + 1 : snakeLength_;
+  const int newLength = (ateFood && snakeLength_ < MAX_SNAKE_LENGTH)
+      ? snakeLength_ + 1
+      : snakeLength_;
 
   for (int i = newLength - 1; i > 0; --i) {
     snake_[i] = snake_[i - 1];
@@ -82,6 +85,7 @@ bool Game::update() {
 
   if (ateFood) {
     score_++;
+    increaseSpeed();
     if (snakeLength_ < MAX_SNAKE_LENGTH) {
       placeFood();
     } else {
@@ -125,6 +129,10 @@ Cell Game::food() const {
   return food_;
 }
 
+uint32_t Game::currentTickMs() const {
+  return currentTickMs_;
+}
+
 void Game::placeFood() {
   if (snakeLength_ >= MAX_SNAKE_LENGTH) {
     food_ = {-1, -1};
@@ -137,6 +145,19 @@ void Game::placeFood() {
       static_cast<int8_t>(random(BOARD_ROWS))
     };
   } while (isSnakeCell(food_.x, food_.y));
+}
+
+void Game::increaseSpeed() {
+  if (currentTickMs_ <= MIN_GAME_TICK_MS) {
+    currentTickMs_ = MIN_GAME_TICK_MS;
+    return;
+  }
+
+  if (currentTickMs_ - MIN_GAME_TICK_MS <= TICK_DECREASE_PER_FOOD_MS) {
+    currentTickMs_ = MIN_GAME_TICK_MS;
+  } else {
+    currentTickMs_ -= TICK_DECREASE_PER_FOOD_MS;
+  }
 }
 
 Cell Game::bodyOffset(Direction direction) const {

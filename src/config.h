@@ -32,7 +32,10 @@ constexpr int RIGHT_BUTTON_X = SCREEN_WIDTH - LEFT_BUTTON_X - BUTTON_SIZE;
 constexpr int TOP_BUTTON_Y = 58;
 constexpr int BOTTOM_BUTTON_Y = 136;
 
-constexpr uint32_t GAME_TICK_MS = 300;
+constexpr uint32_t INITIAL_GAME_TICK_MS = 500;
+constexpr uint32_t MIN_GAME_TICK_MS = 120;
+constexpr uint32_t TICK_DECREASE_PER_FOOD_MS = 20;
+constexpr uint32_t STARTUP_SPLASH_MS = 5500;
 constexpr int MAX_SNAKE_LENGTH = BOARD_COLS * BOARD_ROWS;
 
 constexpr bool DEBUG_RENDER_REDRAWS = true;
