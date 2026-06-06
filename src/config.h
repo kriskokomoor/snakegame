@@ -18,28 +18,58 @@ constexpr int TOUCH_SPI_SCLK = 25;
 constexpr int TOUCH_CS_PIN = 33;
 constexpr int TOUCH_IRQ_PIN = 36;
 
-constexpr int BOARD_COLS = 16;
-constexpr int BOARD_ROWS = 16;
-constexpr int CELL_SIZE = 12;
-constexpr int BOARD_WIDTH = BOARD_COLS * CELL_SIZE;
-constexpr int BOARD_HEIGHT = BOARD_ROWS * CELL_SIZE;
-constexpr int BOARD_X = (SCREEN_WIDTH - BOARD_WIDTH) / 2;
-constexpr int BOARD_Y = 28;
+// Layout: 28px banner + game board
+constexpr int BANNER_HEIGHT = 28;
+constexpr int BOARD_COLS = 32;
+constexpr int BOARD_ROWS = 21;
+constexpr int CELL_SIZE = 10;
+constexpr int BOARD_WIDTH = BOARD_COLS * CELL_SIZE;   // 320px
+constexpr int BOARD_HEIGHT = BOARD_ROWS * CELL_SIZE;  // 210px
+constexpr int BOARD_X = 0;
+constexpr int BOARD_Y = BANNER_HEIGHT;
 
-constexpr int BUTTON_SIZE = 48;
-constexpr int LEFT_BUTTON_X = 8;
-constexpr int RIGHT_BUTTON_X = SCREEN_WIDTH - LEFT_BUTTON_X - BUTTON_SIZE;
-constexpr int TOP_BUTTON_Y = 58;
-constexpr int BOTTOM_BUTTON_Y = 136;
+// Invisible touch zones for touchscreen fallback
+// Top-left corner for start/resume
+constexpr int TOUCH_START_ZONE_X = 0;
+constexpr int TOUCH_START_ZONE_Y = BANNER_HEIGHT;
+constexpr int TOUCH_START_ZONE_WIDTH = 40;
+constexpr int TOUCH_START_ZONE_HEIGHT = 40;
+
+// Direction zones (invisible buttons at edges)
+// Left side
+constexpr int TOUCH_LEFT_ZONE_X = 0;
+constexpr int TOUCH_LEFT_ZONE_Y = BANNER_HEIGHT + 80;
+constexpr int TOUCH_LEFT_ZONE_WIDTH = 40;
+constexpr int TOUCH_LEFT_ZONE_HEIGHT = 60;
+
+// Right side
+constexpr int TOUCH_RIGHT_ZONE_X = SCREEN_WIDTH - 40;
+constexpr int TOUCH_RIGHT_ZONE_Y = BANNER_HEIGHT + 80;
+constexpr int TOUCH_RIGHT_ZONE_WIDTH = 40;
+constexpr int TOUCH_RIGHT_ZONE_HEIGHT = 60;
+
+// Top area for UP
+constexpr int TOUCH_UP_ZONE_X = SCREEN_WIDTH / 2 - 30;
+constexpr int TOUCH_UP_ZONE_Y = BANNER_HEIGHT;
+constexpr int TOUCH_UP_ZONE_WIDTH = 60;
+constexpr int TOUCH_UP_ZONE_HEIGHT = 40;
+
+// Bottom area for DOWN
+constexpr int TOUCH_DOWN_ZONE_X = SCREEN_WIDTH / 2 - 30;
+constexpr int TOUCH_DOWN_ZONE_Y = SCREEN_HEIGHT - 40;
+constexpr int TOUCH_DOWN_ZONE_WIDTH = 60;
+constexpr int TOUCH_DOWN_ZONE_HEIGHT = 40;
 
 constexpr uint32_t INITIAL_GAME_TICK_MS = 500;
 constexpr uint32_t MIN_GAME_TICK_MS = 120;
 constexpr uint32_t TICK_DECREASE_PER_FOOD_MS = 20;
-constexpr uint32_t STARTUP_SPLASH_MS = 5500;
+constexpr uint32_t STARTUP_SPLASH_MS = 3000;
+constexpr uint32_t BIRTHDAY_SPLASH_TIMEOUT_MS = 60000;
+constexpr uint32_t STARTUP_CONTROLLER_WAIT_MS = 60000;
 constexpr int MAX_SNAKE_LENGTH = BOARD_COLS * BOARD_ROWS;
 
-constexpr bool DEBUG_RENDER_REDRAWS = true;
-constexpr bool DEBUG_LOG_RENDER_DRAWS = true;
+constexpr bool DEBUG_RENDER_REDRAWS = false;
+constexpr bool DEBUG_LOG_RENDER_DRAWS = false;
 constexpr bool DEBUG_DISABLE_TOUCH_POLLING = false;
 constexpr bool DEBUG_DISABLE_GAME_RENDER = false;
 constexpr bool DEBUG_REASSERT_BACKLIGHT = false;

@@ -1,13 +1,14 @@
 #pragma once
 
 #include "Game.h"
+#include "controller_manager.h"
 
 #include <SPI.h>
 #include <TFT_eSPI.h>
 
-class Input {
+class GameInput {
 public:
-  explicit Input(TFT_eSPI& tft);
+  explicit GameInput(TFT_eSPI& tft);
 
   void begin();
   void update();
@@ -15,17 +16,23 @@ public:
   bool touched() const;
   bool directionAvailable() const;
   Direction direction() const;
+  bool actionAvailable() const;
+  ControllerCommand action() const;
+  bool pauseRequested() const;
 
 private:
   void beginTouchController();
   uint16_t readPressure();
   void readRawPoint(uint16_t& rawX, uint16_t& rawY);
-  bool pointInButton(uint16_t x, uint16_t y, int buttonX, int buttonY) const;
+  bool pointInZone(uint16_t x, uint16_t y, int zoneX, int zoneY, int zoneWidth, int zoneHeight) const;
 
   TFT_eSPI& tft_;
   SPIClass touchSpi_;
   int touchCs_;
   bool touched_;
   bool directionAvailable_;
+  bool actionAvailable_;
+  bool pauseRequested_;
   Direction direction_;
+  ControllerCommand action_;
 };

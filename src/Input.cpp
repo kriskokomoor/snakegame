@@ -17,23 +17,73 @@ uint16_t mapRawAxis(uint16_t raw, int rawMin, int rawMax, int screenMax, bool in
 }
 }
 
-Input::Input(TFT_eSPI& tft)
+GameInput::GameInput(TFT_eSPI& tft)
     : tft_(tft),
       touchSpi_(VSPI),
       touchCs_(-1),
       touched_(false),
       directionAvailable_(false),
-      direction_(Direction::Right) {
+      actionAvailable_(false),
+      pauseRequested_(false),
+      direction_(Direction::Right),
+      action_(ControllerCommand::NONE) {
 }
 
-void Input::begin() {
+void GameInput::begin() {
   beginTouchController();
+  ControllerManager::begin();
 }
 
-void Input::update() {
+void GameInput::update() {
+  // Check controller first
+  ControllerCommand command = ControllerManager::consumeCommand();
+  directionAvailable_ = false;
+  actionAvailable_ = false;
+  pauseRequested_ = false;
+  action_ = ControllerCommand::NONE;
+
+  if (command != ControllerCommand::NONE) {
+    switch (command) {
+      case ControllerCommand::UP:
+        direction_ = Direction::Up;
+        directionAvailable_ = true;
+        break;
+      case ControllerCommand::DOWN:
+        direction_ = Direction::Down;
+        directionAvailable_ = true;
+        break;
+      case ControllerCommand::LEFT:
+        direction_ = Direction::Left;
+        directionAvailable_ = true;
+        break;
+      case ControllerCommand::RIGHT:
+        direction_ = Direction::Right;
+        directionAvailable_ = true;
+        break;
+      case ControllerCommand::ACTION_1:
+        pauseRequested_ = true; // ACTION_1 -> pause/resume
+        break;
+      case ControllerCommand::ACTION_2:
+        actionAvailable_ = true; // ACTION_2 -> start/restart
+        action_ = ControllerCommand::ACTION_2;
+        break;
+      case ControllerCommand::START:
+      case ControllerCommand::SELECT:
+        pauseRequested_ = true; // Reserved for menus, but use as pause fallback
+        break;
+      case ControllerCommand::NONE:
+      default:
+        break;
+    }
+  }
+
+  // Fall back to touchscreen input
+  if (directionAvailable_ || actionAvailable_ || pauseRequested_) {
+    return;  // Already have input from controller
+  }
+
   if (DEBUG_DISABLE_TOUCH_POLLING) {
     touched_ = false;
-    directionAvailable_ = false;
     return;
   }
 
@@ -45,6 +95,8 @@ void Input::update() {
 
   touched_ = pressure > TOUCH_THRESHOLD;
   directionAvailable_ = false;
+  actionAvailable_ = false;
+  pauseRequested_ = false;
 
   if (!touched_) {
     return;
@@ -60,34 +112,49 @@ void Input::update() {
     y = mapRawAxis(rawY, TOUCH_RAW_Y_MIN, TOUCH_RAW_Y_MAX, SCREEN_HEIGHT, TOUCH_INVERT_Y);
   }
 
-  if (pointInButton(x, y, LEFT_BUTTON_X, TOP_BUTTON_Y)) {
-    direction_ = Direction::Left;
-    directionAvailable_ = true;
-  } else if (pointInButton(x, y, LEFT_BUTTON_X, BOTTOM_BUTTON_Y)) {
-    direction_ = Direction::Down;
-    directionAvailable_ = true;
-  } else if (pointInButton(x, y, RIGHT_BUTTON_X, TOP_BUTTON_Y)) {
-    direction_ = Direction::Right;
-    directionAvailable_ = true;
-  } else if (pointInButton(x, y, RIGHT_BUTTON_X, BOTTOM_BUTTON_Y)) {
+  // Check invisible touch zones for direction input
+  if (pointInZone(x, y, TOUCH_UP_ZONE_X, TOUCH_UP_ZONE_Y, TOUCH_UP_ZONE_WIDTH, TOUCH_UP_ZONE_HEIGHT)) {
     direction_ = Direction::Up;
     directionAvailable_ = true;
+  } else if (pointInZone(x, y, TOUCH_DOWN_ZONE_X, TOUCH_DOWN_ZONE_Y, TOUCH_DOWN_ZONE_WIDTH, TOUCH_DOWN_ZONE_HEIGHT)) {
+    direction_ = Direction::Down;
+    directionAvailable_ = true;
+  } else if (pointInZone(x, y, TOUCH_LEFT_ZONE_X, TOUCH_LEFT_ZONE_Y, TOUCH_LEFT_ZONE_WIDTH, TOUCH_LEFT_ZONE_HEIGHT)) {
+    direction_ = Direction::Left;
+    directionAvailable_ = true;
+  } else if (pointInZone(x, y, TOUCH_RIGHT_ZONE_X, TOUCH_RIGHT_ZONE_Y, TOUCH_RIGHT_ZONE_WIDTH, TOUCH_RIGHT_ZONE_HEIGHT)) {
+    direction_ = Direction::Right;
+    directionAvailable_ = true;
+  } else if (pointInZone(x, y, TOUCH_START_ZONE_X, TOUCH_START_ZONE_Y, TOUCH_START_ZONE_WIDTH, TOUCH_START_ZONE_HEIGHT)) {
+    pauseRequested_ = true;
   }
 }
 
-bool Input::touched() const {
+bool GameInput::touched() const {
   return touched_;
 }
 
-bool Input::directionAvailable() const {
+bool GameInput::directionAvailable() const {
   return directionAvailable_;
 }
 
-Direction Input::direction() const {
+Direction GameInput::direction() const {
   return direction_;
 }
 
-void Input::beginTouchController() {
+bool GameInput::actionAvailable() const {
+  return actionAvailable_;
+}
+
+ControllerCommand GameInput::action() const {
+  return action_;
+}
+
+bool GameInput::pauseRequested() const {
+  return pauseRequested_;
+}
+
+void GameInput::beginTouchController() {
   touchSpi_.begin(TOUCH_SPI_SCLK, TOUCH_SPI_MISO, TOUCH_SPI_MOSI, TOUCH_CS_PIN);
   pinMode(TFT_DISPLAY_CS, OUTPUT);
   digitalWrite(TFT_DISPLAY_CS, HIGH);
@@ -98,7 +165,7 @@ void Input::beginTouchController() {
   digitalWrite(touchCs_, HIGH);
 }
 
-uint16_t Input::readPressure() {
+uint16_t GameInput::readPressure() {
   if (touchCs_ < 0) {
     return 0;
   }
@@ -122,7 +189,7 @@ uint16_t Input::readPressure() {
   return static_cast<uint16_t>(pressure);
 }
 
-void Input::readRawPoint(uint16_t& rawX, uint16_t& rawY) {
+void GameInput::readRawPoint(uint16_t& rawX, uint16_t& rawY) {
   if (touchCs_ < 0) {
     rawX = 0;
     rawY = 0;
@@ -164,7 +231,7 @@ void Input::readRawPoint(uint16_t& rawX, uint16_t& rawY) {
   touchSpi_.endTransaction();
 }
 
-bool Input::pointInButton(uint16_t x, uint16_t y, int buttonX, int buttonY) const {
-  return x >= buttonX && x < buttonX + BUTTON_SIZE &&
-         y >= buttonY && y < buttonY + BUTTON_SIZE;
+bool GameInput::pointInZone(uint16_t x, uint16_t y, int zoneX, int zoneY, int zoneWidth, int zoneHeight) const {
+  return x >= zoneX && x < zoneX + zoneWidth &&
+         y >= zoneY && y < zoneY + zoneHeight;
 }

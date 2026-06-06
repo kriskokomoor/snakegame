@@ -11,6 +11,13 @@ enum class Direction : uint8_t {
   Left
 };
 
+enum class GameState : uint8_t {
+  Ready,
+  Play,
+  Pause,
+  GameOver
+};
+
 struct Cell {
   int8_t x;
   int8_t y;
@@ -33,6 +40,9 @@ public:
   int snakeLength() const;
   Cell food() const;
   uint32_t currentTickMs() const;
+  GameState state() const;
+  void setState(GameState newState);
+  void togglePause();
 
 private:
   void placeFood();
@@ -49,4 +59,5 @@ private:
   int score_;
   uint32_t currentTickMs_;
   bool gameOver_;
+  GameState state_;
 };

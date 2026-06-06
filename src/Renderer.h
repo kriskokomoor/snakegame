@@ -9,31 +9,31 @@ public:
   explicit Renderer(TFT_eSPI& tft);
 
   void begin();
-  void drawStartupSplash();
-  void draw(const Game& game);
+  void drawBirthdaySplash(bool controllerConnected, uint32_t waitTimeMs);
+  void drawStartupSplash(bool controllerConnected, uint32_t waitTimeMs);
+  void draw(const Game& game, bool controllerReady);
+  void invalidate();
 
 private:
-  void drawStaticLayout();
-  void drawBoard();
+  void drawBanner(const Game& game, bool controllerReady);
+  void drawBoardBackground();
   void drawSnake(const Game& game);
-  int previousSnakeIndex(Cell cell) const;
   void drawCell(Cell cell, uint16_t color);
   void drawSnakeHead(Cell cell);
   void clearCell(Cell cell);
-  bool currentSnakeContains(const Game& game, Cell cell) const;
-  bool shouldDrawSnakeCell(const Game& game, int index) const;
-  bool sameCell(Cell a, Cell b) const;
   void drawFood(Cell food);
-  void drawScore(int score);
-  void drawButtons();
-  void drawButton(int x, int y, const char* label, uint16_t color);
-  void drawGameOver(int score);
+  bool shouldDrawSnakeCell(const Game& game, int index) const;
+  bool currentSnakeContains(const Game& game, Cell cell) const;
+  bool sameCell(Cell a, Cell b) const;
+  const char* getGameStateString(GameState state) const;
 
   TFT_eSPI& tft_;
   Cell previousSnake_[MAX_SNAKE_LENGTH];
   int previousSnakeLength_;
   Cell previousFood_;
   int previousScore_;
+  GameState previousGameState_;
+  bool previousControllerReady_;
   bool initialized_;
-  bool previousGameOver_;
+  bool gameOverModalDrawn_;
 };

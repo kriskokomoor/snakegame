@@ -10,6 +10,7 @@ Game::Game() {
 void Game::begin() {
   randomSeed(esp_random());
   restart();
+  state_ = GameState::Ready;
 }
 
 void Game::restart() {
@@ -33,11 +34,12 @@ void Game::restart(Direction initialDirection) {
   score_ = 0;
   currentTickMs_ = INITIAL_GAME_TICK_MS;
   gameOver_ = false;
+  state_ = GameState::Ready;
   placeFood();
 }
 
 bool Game::update() {
-  if (gameOver_) {
+  if (gameOver_ || state_ == GameState::Pause || state_ == GameState::Ready) {
     return false;
   }
 
@@ -61,6 +63,7 @@ bool Game::update() {
 
   if (next.x < 0 || next.x >= BOARD_COLS || next.y < 0 || next.y >= BOARD_ROWS) {
     gameOver_ = true;
+    state_ = GameState::GameOver;
     return true;
   }
 
@@ -69,6 +72,7 @@ bool Game::update() {
   for (int i = 0; i < bodyCellsToCheck; ++i) {
     if (snake_[i].x == next.x && snake_[i].y == next.y) {
       gameOver_ = true;
+      state_ = GameState::GameOver;
       return true;
     }
   }
@@ -90,6 +94,7 @@ bool Game::update() {
       placeFood();
     } else {
       gameOver_ = true;
+      state_ = GameState::GameOver;
     }
   }
 
@@ -131,6 +136,22 @@ Cell Game::food() const {
 
 uint32_t Game::currentTickMs() const {
   return currentTickMs_;
+}
+
+GameState Game::state() const {
+  return state_;
+}
+
+void Game::setState(GameState newState) {
+  state_ = newState;
+}
+
+void Game::togglePause() {
+  if (state_ == GameState::Play) {
+    state_ = GameState::Pause;
+  } else if (state_ == GameState::Pause) {
+    state_ = GameState::Play;
+  }
 }
 
 void Game::placeFood() {
