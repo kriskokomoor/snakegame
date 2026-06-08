@@ -73,10 +73,22 @@ constexpr bool DEBUG_LOG_RENDER_DRAWS = false;
 constexpr bool DEBUG_DISABLE_TOUCH_POLLING = false;
 constexpr bool DEBUG_DISABLE_GAME_RENDER = false;
 constexpr bool DEBUG_REASSERT_BACKLIGHT = false;
+constexpr bool DEBUG_FORGET_BLUETOOTH_KEYS_ON_BOOT = false;
+constexpr bool DEBUG_DISABLE_BLE_ON_BOOT = true;
+constexpr bool DEBUG_ENABLE_BLUETOOTH_ALLOWLIST = false;
+constexpr uint8_t DEBUG_BLUETOOTH_ALLOWLIST_ADDR[6] = {0xE4, 0x17, 0xD8, 0x7D, 0x1A, 0xFA};
 constexpr uint32_t DEBUG_BACKLIGHT_REASSERT_MS = 250;
 
 constexpr uint16_t TOUCH_THRESHOLD = 80;
+constexpr uint8_t TOUCH_PRESS_DEBOUNCE_SAMPLES = 3;
+constexpr uint8_t TOUCH_RELEASE_DEBOUNCE_SAMPLES = 2;
 constexpr uint32_t TOUCH_SPI_FREQUENCY = 2500000;
+
+// SD card — VSPI default pins on CYD (ESP32-2432S028)
+constexpr int SD_SPI_CLK  = 18;
+constexpr int SD_SPI_MISO = 19;
+constexpr int SD_SPI_MOSI = 23;
+constexpr int SD_CS_PIN   = 5;
 
 constexpr int TOUCH_RAW_X_MIN = 200;
 constexpr int TOUCH_RAW_X_MAX = 3800;

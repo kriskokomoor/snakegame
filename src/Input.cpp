@@ -25,6 +25,9 @@ GameInput::GameInput(TFT_eSPI& tft)
       directionAvailable_(false),
       actionAvailable_(false),
       pauseRequested_(false),
+      suppressTouchUntilRelease_(false),
+      touchPressSamples_(0),
+      touchReleaseSamples_(TOUCH_RELEASE_DEBOUNCE_SAMPLES),
       direction_(Direction::Right),
       action_(ControllerCommand::NONE) {
 }
@@ -42,7 +45,7 @@ void GameInput::update() {
   pauseRequested_ = false;
   action_ = ControllerCommand::NONE;
 
-  if (command != ControllerCommand::NONE) {
+  if (command != ControllerCommand::NONE && ControllerManager::isConnected()) {
     switch (command) {
       case ControllerCommand::UP:
         direction_ = Direction::Up;
@@ -84,6 +87,9 @@ void GameInput::update() {
 
   if (DEBUG_DISABLE_TOUCH_POLLING) {
     touched_ = false;
+    touchPressSamples_ = 0;
+    touchReleaseSamples_ = TOUCH_RELEASE_DEBOUNCE_SAMPLES;
+    suppressTouchUntilRelease_ = false;
     return;
   }
 
@@ -93,16 +99,39 @@ void GameInput::update() {
   uint16_t rawY = 0;
   const uint16_t pressure = readPressure();
 
-  touched_ = pressure > TOUCH_THRESHOLD;
   directionAvailable_ = false;
   actionAvailable_ = false;
   pauseRequested_ = false;
 
-  if (!touched_) {
+  if (pressure <= TOUCH_THRESHOLD) {
+    touchPressSamples_ = 0;
+    if (touchReleaseSamples_ < TOUCH_RELEASE_DEBOUNCE_SAMPLES) {
+      ++touchReleaseSamples_;
+    }
+    if (touchReleaseSamples_ >= TOUCH_RELEASE_DEBOUNCE_SAMPLES) {
+      touched_ = false;
+      suppressTouchUntilRelease_ = false;
+    }
     return;
   }
 
   readRawPoint(rawX, rawY);
+
+  if (rawX < TOUCH_RAW_X_MIN || rawX > TOUCH_RAW_X_MAX || rawY < TOUCH_RAW_Y_MIN || rawY > TOUCH_RAW_Y_MAX) {
+    touched_ = false;
+    touchPressSamples_ = 0;
+    return;
+  }
+
+  touchReleaseSamples_ = 0;
+  if (touchPressSamples_ < TOUCH_PRESS_DEBOUNCE_SAMPLES) {
+    ++touchPressSamples_;
+  }
+
+  touched_ = touchPressSamples_ >= TOUCH_PRESS_DEBOUNCE_SAMPLES;
+  if (!touched_ || suppressTouchUntilRelease_) {
+    return;
+  }
 
   if (TOUCH_SWAP_XY) {
     x = mapRawAxis(rawY, TOUCH_RAW_Y_MIN, TOUCH_RAW_Y_MAX, SCREEN_WIDTH, TOUCH_INVERT_X);
@@ -132,6 +161,13 @@ void GameInput::update() {
 
 bool GameInput::touched() const {
   return touched_;
+}
+
+void GameInput::suppressTouchUntilRelease() {
+  suppressTouchUntilRelease_ = touched_;
+  directionAvailable_ = false;
+  actionAvailable_ = false;
+  pauseRequested_ = false;
 }
 
 bool GameInput::directionAvailable() const {

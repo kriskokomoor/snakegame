@@ -1,7 +1,11 @@
 #include "controller_manager.h"
 
+#include "config.h"
+
 #include <Arduino.h>
+#include <bt/uni_bt_allowlist.h>
 #include <bt/uni_bt.h>
+#include <bt/uni_bt_le.h>
 #include <btstack_port_esp32.h>
 #include <btstack_run_loop.h>
 #include <freertos/FreeRTOS.h>
@@ -13,8 +17,10 @@ namespace {
 constexpr bool kVerboseRawControllerDump = false;
 constexpr uint32_t kVerboseRawDumpPeriodMs = 250;
 constexpr int32_t kAxisDeadZone = 200;
-constexpr uint16_t kAction1Mask = 0x0001;
-constexpr uint16_t kAction2Mask = 0x0002;
+constexpr uint16_t kAction1Mask = BUTTON_A;
+constexpr uint16_t kAction2Mask = BUTTON_B;
+constexpr uint16_t k8BitDoVendorId = 0x2dc8;
+constexpr uint16_t k8BitDoZero2ProductId = 0x3230;
 
 ControllerSnapshot g_state = {};
 uni_hid_device_t* g_controllers[CONFIG_BLUEPAD32_MAX_DEVICES] = {};
@@ -142,6 +148,21 @@ void maybePrintVerboseRaw(const uni_controller_t& ctl, uint32_t now) {
   last_raw_dump_ms = now;
 }
 
+bool is8BitDoZero2(const uni_hid_device_t* d) {
+  return d->name[0] != '\0' && strstr(d->name, "8BitDo Zero 2") != nullptr;
+}
+
+void applyKnownControllerIdentity(uni_hid_device_t* d) {
+  if (!is8BitDoZero2(d)) return;
+
+  if (d->vendor_id == k8BitDoVendorId && d->product_id == k8BitDoZero2ProductId) return;
+
+  Serial.println("Bluepad32: recognized 8BitDo Zero 2 by name; using known VID/PID to avoid fragile SDP query.");
+  uni_hid_device_set_vendor_id(d, k8BitDoVendorId);
+  uni_hid_device_set_product_id(d, k8BitDoZero2ProductId);
+  uni_hid_device_guess_controller_type_from_pid_vid(d);
+}
+
 void printStateSummary(const ControllerSnapshot& s) {
   char dpad[40], buttons[64], misc[48];
   describeDpad(s.gamepad.dpad, dpad, sizeof(dpad));
@@ -164,11 +185,37 @@ void maybePrintCommandEvent(const uni_controller_t& ctl, ControllerCommand seman
   have_last_command = true;
 }
 
-void platformInit(int, const char**) {}
+void platformInit(int, const char**) {
+  uni_bt_set_gap_security_level(2);
+  Serial.printf("Bluepad32: forcing GAP security level %d for HID pairing.\n", uni_bt_get_gap_security_level());
+
+  if (DEBUG_DISABLE_BLE_ON_BOOT) {
+    Serial.println("Bluepad32: disabling BLE; using BR/EDR HID for 8BitDo Zero 2 DInput mode.");
+    uni_bt_le_set_enabled(false);
+  }
+}
 
 void platformOnInitComplete() {
   Serial.println("Bluepad32 initialized.");
   Serial.println("Pair the 8BitDo Zero 2 in D-input/gamepad mode and wait for connection.");
+  if (DEBUG_FORGET_BLUETOOTH_KEYS_ON_BOOT) {
+    Serial.println("Bluepad32: deleting stored Bluetooth keys before scanning.");
+    uni_bt_del_keys_unsafe();
+  }
+  if (DEBUG_ENABLE_BLUETOOTH_ALLOWLIST) {
+    bd_addr_t allowed = {
+        DEBUG_BLUETOOTH_ALLOWLIST_ADDR[0],
+        DEBUG_BLUETOOTH_ALLOWLIST_ADDR[1],
+        DEBUG_BLUETOOTH_ALLOWLIST_ADDR[2],
+        DEBUG_BLUETOOTH_ALLOWLIST_ADDR[3],
+        DEBUG_BLUETOOTH_ALLOWLIST_ADDR[4],
+        DEBUG_BLUETOOTH_ALLOWLIST_ADDR[5],
+    };
+    Serial.printf("Bluepad32: allowlisting only %s.\n", bd_addr_to_str(allowed));
+    uni_bt_allowlist_remove_all();
+    uni_bt_allowlist_add_addr(allowed);
+    uni_bt_allowlist_set_enabled(true);
+  }
   Serial.println("Bluepad32: starting scan/autoconnect from BTstack thread.");
   uni_bt_start_scanning_and_autoconnect_unsafe();
 }
@@ -180,12 +227,15 @@ uni_error_t platformOnDeviceDiscovered(bd_addr_t, const char* name, uint16_t cod
 }
 
 void platformOnDeviceConnected(uni_hid_device_t* d) {
+  applyKnownControllerIdentity(d);
+
   portENTER_CRITICAL(&g_state_mux);
   claimControllerSlot(d);
   copyDeviceInfoUnlocked(d);
   portEXIT_CRITICAL(&g_state_mux);
 
-  Serial.printf("Controller connected: name=%s slot_count=%u\n", d->name[0] ? d->name : "(unnamed)",
+  Serial.printf("Controller connected: addr=%s name=%s slot_count=%u\n", bd_addr_to_str(d->conn.btaddr),
+                d->name[0] ? d->name : "(unnamed)",
                 ControllerManager::snapshot().connected_count);
 }
 
@@ -208,7 +258,8 @@ void platformOnDeviceDisconnected(uni_hid_device_t* d) {
   }
   portEXIT_CRITICAL(&g_state_mux);
 
-  Serial.printf("Controller disconnected. connected_count=%u\n", ControllerManager::snapshot().connected_count);
+  Serial.printf("Controller disconnected: addr=%s connected_count=%u\n", bd_addr_to_str(d->conn.btaddr),
+                ControllerManager::snapshot().connected_count);
 }
 
 uni_error_t platformOnDeviceReady(uni_hid_device_t* d) {
@@ -220,8 +271,8 @@ uni_error_t platformOnDeviceReady(uni_hid_device_t* d) {
   portEXIT_CRITICAL(&g_state_mux);
 
   ControllerSnapshot s = ControllerManager::snapshot();
-  Serial.printf("Controller ready: model=%s name=%s vid=0x%04x pid=0x%04x battery=%s count=%u\n",
-                s.model_name, s.device_name, d->vendor_id, d->product_id,
+  Serial.printf("Controller ready: addr=%s model=%s name=%s vid=0x%04x pid=0x%04x battery=%s count=%u\n",
+                bd_addr_to_str(d->conn.btaddr), s.model_name, s.device_name, d->vendor_id, d->product_id,
                 ControllerManager::batteryText(s.battery), s.connected_count);
   return UNI_ERROR_SUCCESS;
 }
@@ -239,10 +290,12 @@ void platformOnControllerData(uni_hid_device_t* d, uni_controller_t* ctl) {
   g_state.ready = true;
   g_state.battery = ctl->battery;
   g_state.gamepad = ctl->gamepad;
-  if (command != g_current_command) {
+  if (command != ControllerCommand::NONE && command != g_current_command) {
     g_current_command = command;
     g_pending_command = command;
     g_has_pending_command = true;
+  } else if (command == ControllerCommand::NONE) {
+    g_current_command = ControllerCommand::NONE;
   }
   g_state.command = ControllerManager::commandText(g_current_command);
   ControllerSnapshot snapshot = g_state;

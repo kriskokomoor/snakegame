@@ -9,6 +9,7 @@ public:
   explicit Renderer(TFT_eSPI& tft);
 
   void begin();
+  bool beginSd();
   void drawBirthdaySplash(bool controllerConnected, uint32_t waitTimeMs);
   void drawStartupSplash(bool controllerConnected, uint32_t waitTimeMs);
   void draw(const Game& game, bool controllerReady);
@@ -26,6 +27,8 @@ private:
   bool currentSnakeContains(const Game& game, Cell cell) const;
   bool sameCell(Cell a, Cell b) const;
   const char* getGameStateString(GameState state) const;
+  bool drawBmpFromSd(const char* path, int16_t x, int16_t y);
+  void drawBirthdaySplashProcedural();
 
   TFT_eSPI& tft_;
   Cell previousSnake_[MAX_SNAKE_LENGTH];
@@ -36,4 +39,6 @@ private:
   bool previousControllerReady_;
   bool initialized_;
   bool gameOverModalDrawn_;
+  bool sdAvailable_;
+  bool bmpSplashDrawn_;
 };

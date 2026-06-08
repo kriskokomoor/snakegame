@@ -12,6 +12,7 @@ public:
 
   void begin();
   void update();
+  void suppressTouchUntilRelease();
 
   bool touched() const;
   bool directionAvailable() const;
@@ -33,6 +34,9 @@ private:
   bool directionAvailable_;
   bool actionAvailable_;
   bool pauseRequested_;
+  bool suppressTouchUntilRelease_;
+  uint8_t touchPressSamples_;
+  uint8_t touchReleaseSamples_;
   Direction direction_;
   ControllerCommand action_;
 };

@@ -1,6 +1,10 @@
 #include "Renderer.h"
 #include "config.h"
 #include <Arduino.h>
+#include <SPI.h>
+#include <SD.h>
+
+static SPIClass sdSpi(VSPI);
 
 // Define GFX font structures locally to ensure headers compile 
 // and we can render manually if the library is misconfigured.
@@ -105,7 +109,9 @@ Renderer::Renderer(TFT_eSPI& tft)
       previousGameState_(GameState::Ready),
       previousControllerReady_(false),
       initialized_(false),
-      gameOverModalDrawn_(false) {
+      gameOverModalDrawn_(false),
+      sdAvailable_(false),
+      bmpSplashDrawn_(false) {
 }
 
 void Renderer::begin() {
@@ -113,6 +119,18 @@ void Renderer::begin() {
   tft_.setRotation(SCREEN_ROTATION);
   tft_.fillScreen(TFT_BLACK);
   tft_.setTextWrap(false);
+}
+
+bool Renderer::beginSd() {
+  sdSpi.begin(SD_SPI_CLK, SD_SPI_MISO, SD_SPI_MOSI, SD_CS_PIN);
+  if (!SD.begin(SD_CS_PIN, sdSpi, 20000000)) {
+    Serial.println("SD: init failed – no card or wiring issue");
+    sdAvailable_ = false;
+    return false;
+  }
+  sdAvailable_ = true;
+  Serial.println("SD: ready");
+  return true;
 }
 
 void Renderer::drawStartupSplash(bool controllerConnected, uint32_t waitTimeMs) {
@@ -247,42 +265,134 @@ void Renderer::drawBoardBackground() {
 }
 
 void Renderer::drawBirthdaySplash(bool controllerConnected, uint32_t waitTimeMs) {
-  static uint32_t lastFullRedraw = 0;
-  static uint32_t lastSec = 0xFFFFFFFF;
   static bool lastConnected = false;
+  static uint32_t lastSec = 0xFFFFFFFF;
 
-  bool needsFullRedraw = (waitTimeMs - lastFullRedraw > 1500) || !initialized_;
-  uint32_t remainingSec = (BIRTHDAY_SPLASH_TIMEOUT_MS - waitTimeMs + 999) / 1000;
-  
-  if (needsFullRedraw) {
-    if (!initialized_) {
-      tft_.fillScreen(TFT_MAGENTA);  // only clear on first draw
+  if (!bmpSplashDrawn_) {
+    bool drawn = sdAvailable_ &&
+                 drawBmpFromSd("/images/Happy_Birthday_Rachael_VFD_320x240.bmp", 0, 0);
+    if (!drawn) {
+      drawBirthdaySplashProcedural();
     }
-    for(int i=0; i<40; i++) {
-        tft_.fillCircle(random(SCREEN_WIDTH), random(SCREEN_HEIGHT), random(2,5), random(0xFFFF));
-    }
-    lastFullRedraw = waitTimeMs;
-    
-    renderGFXString(tft_, "Happy Birthday", SCREEN_WIDTH / 2, 60, &FreeSansBold12pt7b, TFT_WHITE, TC_DATUM);
-    renderGFXString(tft_, "Rachael!", SCREEN_WIDTH / 2, 95, &FreeSansBold12pt7b, TFT_YELLOW, TC_DATUM);
-    renderGFXString(tft_, "Press any button to start", SCREEN_WIDTH / 2, 190, &FreeSans9pt7b, TFT_WHITE, TC_DATUM);
+    bmpSplashDrawn_ = true;
+    // Unmount before input.begin() reconfigures VSPI for the touch controller
+    SD.end();
+    sdAvailable_ = false;
+    // Force status overlay to paint on the very next check
+    lastConnected = !controllerConnected;
+    lastSec = 0xFFFFFFFF;
   }
 
-  // Only update status line if something changed to prevent flashing
-  if (needsFullRedraw || controllerConnected != lastConnected || remainingSec != lastSec) {
-    tft_.fillRect(0, 130, SCREEN_WIDTH, 30, TFT_MAGENTA);
+  uint32_t remainingSec = (BIRTHDAY_SPLASH_TIMEOUT_MS > waitTimeMs)
+                          ? (BIRTHDAY_SPLASH_TIMEOUT_MS - waitTimeMs + 999) / 1000
+                          : 0;
+
+  if (controllerConnected != lastConnected || remainingSec != lastSec) {
+    constexpr int16_t overlayY = SCREEN_HEIGHT - 30;
+    tft_.fillRect(0, overlayY, SCREEN_WIDTH, 30, TFT_BLACK);
     if (controllerConnected) {
-      renderGFXString(tft_, "Controller: CONNECTED", SCREEN_WIDTH / 2, 150, &FreeSans9pt7b, TFT_GREEN, TC_DATUM);
+      renderGFXString(tft_, "Controller: CONNECTED",
+                      SCREEN_WIDTH / 2, overlayY + 20,
+                      &FreeSans9pt7b, TFT_GREEN, TC_DATUM);
     } else {
-      char buf[32];
-      snprintf(buf, sizeof(buf), "Waiting for remote... %us", remainingSec);
-      renderGFXString(tft_, buf, SCREEN_WIDTH / 2, 150, &FreeSans9pt7b, TFT_CYAN, MC_DATUM);
+      char buf[48];
+      snprintf(buf, sizeof(buf), "Waiting for remote... %us", (unsigned)remainingSec);
+      renderGFXString(tft_, buf,
+                      SCREEN_WIDTH / 2, overlayY + 20,
+                      &FreeSans9pt7b, TFT_CYAN, TC_DATUM);
     }
     lastConnected = controllerConnected;
     lastSec = remainingSec;
   }
 
-  initialized_ = false; // Ensure full redraw after splash
+  initialized_ = false;
+}
+
+void Renderer::drawBirthdaySplashProcedural() {
+  tft_.fillScreen(TFT_MAGENTA);
+  renderGFXString(tft_, "Happy Birthday",          SCREEN_WIDTH / 2, 60,  &FreeSansBold12pt7b, TFT_WHITE,  TC_DATUM);
+  renderGFXString(tft_, "Rachael!",                SCREEN_WIDTH / 2, 95,  &FreeSansBold12pt7b, TFT_YELLOW, TC_DATUM);
+  renderGFXString(tft_, "Press any button to start", SCREEN_WIDTH / 2, 190, &FreeSans9pt7b,     TFT_WHITE,  TC_DATUM);
+}
+
+bool Renderer::drawBmpFromSd(const char* path, int16_t x, int16_t y) {
+  if (!sdAvailable_) return false;
+
+  File f = SD.open(path, FILE_READ);
+  if (!f) {
+    Serial.printf("BMP: cannot open '%s'\n", path);
+    return false;
+  }
+
+  uint8_t hdr[54];
+  if (f.read(hdr, 54) != 54 || hdr[0] != 'B' || hdr[1] != 'M') {
+    Serial.println("BMP: bad or truncated header");
+    f.close();
+    return false;
+  }
+
+  // Explicit little-endian reads — safe on any alignment
+  auto r16 = [](const uint8_t* p) -> uint16_t {
+    return (uint16_t)p[0] | ((uint16_t)p[1] << 8);
+  };
+  auto r32 = [](const uint8_t* p) -> uint32_t {
+    return (uint32_t)p[0] | ((uint32_t)p[1] << 8) |
+           ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
+  };
+
+  uint32_t dataOffset = r32(hdr + 10);
+  int32_t  imgWidth   = (int32_t)r32(hdr + 18);
+  int32_t  imgHeight  = (int32_t)r32(hdr + 22);
+  uint16_t bpp        = r16(hdr + 28);
+  uint32_t compression = r32(hdr + 30);
+
+  if (bpp != 24 || compression != 0) {
+    Serial.printf("BMP: unsupported (bpp=%d compression=%d)\n", bpp, compression);
+    f.close();
+    return false;
+  }
+
+  bool topDown = (imgHeight < 0);
+  if (topDown) imgHeight = -imgHeight;
+
+  if (imgWidth > SCREEN_WIDTH || imgHeight > SCREEN_HEIGHT) {
+    Serial.printf("BMP: image %dx%d exceeds screen %dx%d\n",
+                  imgWidth, imgHeight, SCREEN_WIDTH, SCREEN_HEIGHT);
+    f.close();
+    return false;
+  }
+
+  // Row stride is padded to a 4-byte boundary
+  uint32_t rowStride = ((uint32_t)(imgWidth * 3) + 3u) & ~3u;
+
+  // Static buffers avoid stack pressure on embedded target
+  static uint8_t  rowBuf[SCREEN_WIDTH * 3];
+  static uint16_t pixBuf[SCREEN_WIDTH];
+
+  const int32_t drawW = min((int32_t)SCREEN_WIDTH  - x, imgWidth);
+  const int32_t drawH = min((int32_t)SCREEN_HEIGHT - y, imgHeight);
+
+  tft_.startWrite();
+  tft_.setAddrWindow(x, y, drawW, drawH);
+
+  for (int32_t row = 0; row < drawH; ++row) {
+    int32_t bmpRow = topDown ? row : (imgHeight - 1 - row);
+    f.seek(dataOffset + (uint32_t)bmpRow * rowStride);
+    f.read(rowBuf, (uint32_t)(imgWidth * 3));
+
+    for (int32_t col = 0; col < drawW; ++col) {
+      uint8_t b = rowBuf[col * 3 + 0];
+      uint8_t g = rowBuf[col * 3 + 1];
+      uint8_t r = rowBuf[col * 3 + 2];
+      pixBuf[col] = tft_.color565(r, g, b);
+    }
+    tft_.pushColors(pixBuf, drawW, true);
+  }
+
+  tft_.endWrite();
+  f.close();
+  Serial.printf("BMP: rendered '%s' (%dx%d)\n", path, imgWidth, imgHeight);
+  return true;
 }
 
 void Renderer::drawSnake(const Game& game) {
@@ -317,7 +427,6 @@ void Renderer::drawCell(Cell cell, uint16_t color) {
     CELL_SIZE - (SEGMENT_GAP * 2),
     color
   );
-  // tft_.fillRect(x, y, CELL_SIZE, CELL_SIZE, color);
 }
 
 void Renderer::drawSnakeHead(Cell cell) {
@@ -333,7 +442,12 @@ void Renderer::drawSnakeHead(Cell cell) {
 }
 
 void Renderer::clearCell(Cell cell) {
-  drawCell(cell, TFT_DARKGREY);
+  if (cell.x < 0 || cell.x >= BOARD_COLS || cell.y < 0 || cell.y >= BOARD_ROWS) {
+    return;
+  }
+  const int x = BOARD_X + cell.x * CELL_SIZE;
+  const int y = BOARD_Y + cell.y * CELL_SIZE;
+  tft_.fillRect(x, y, CELL_SIZE, CELL_SIZE, TFT_DARKGREY);
 }
 
 void Renderer::drawFood(Cell food) {

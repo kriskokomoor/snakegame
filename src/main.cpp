@@ -26,9 +26,10 @@ void setup() {
   digitalWrite(TFT_BACKLIGHT_PIN, HIGH);
 
   renderer.begin();
-  input.begin();  // This also starts the controller manager
+  renderer.beginSd();               // SD on VSPI (pins 18/19/23) – must be before input.begin()
   game.begin();
-  renderer.drawBirthdaySplash(false, 0); // Start with the birthday splash
+  renderer.drawBirthdaySplash(false, 0); // loads BMP once; marks sdAvailable_=false when done
+  input.begin();  // reconfigures VSPI for touch (pins 25/32/39); also starts controller manager
 
   lastTickMs = millis();
   lastBacklightReassertMs = lastTickMs;
@@ -51,16 +52,18 @@ void loop() {
   // Birthday splash screen with controller wait
   if (birthdaySplashActive) {
     uint32_t birthdaySplashElapsedMs = now - splashStartMs;
+    bool controllerConnected = ControllerManager::isConnected();
     bool controllerReady = ControllerManager::isReady();
 
-    if (!controllerReady && birthdaySplashElapsedMs < BIRTHDAY_SPLASH_TIMEOUT_MS && !input.touched() && !input.directionAvailable()) {
-      renderer.drawBirthdaySplash(controllerReady, birthdaySplashElapsedMs);
+    if (!controllerConnected && birthdaySplashElapsedMs < BIRTHDAY_SPLASH_TIMEOUT_MS) {
+      renderer.drawBirthdaySplash(controllerConnected, birthdaySplashElapsedMs);
       delay(50); // yield to IDLE so watchdog doesn't fire during splash
       return;
     }
     birthdaySplashActive = false;
+    input.suppressTouchUntilRelease();
     game.setState(GameState::Ready);
-    renderer.draw(game, ControllerManager::isReady());
+    renderer.draw(game, controllerReady);
   }
 
   bool controllerReady = ControllerManager::isReady();
