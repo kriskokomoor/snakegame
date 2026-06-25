@@ -15,7 +15,8 @@ enum class GameState : uint8_t {
   Ready,
   Play,
   Pause,
-  GameOver
+  GameOver,
+  HighScores
 };
 
 struct Cell {

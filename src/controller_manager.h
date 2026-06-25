@@ -12,6 +12,8 @@ enum class ControllerCommand : uint8_t {
   RIGHT,
   ACTION_1,
   ACTION_2,
+  ACTION_X,
+  ACTION_Y,
   START,
   SELECT,
 };

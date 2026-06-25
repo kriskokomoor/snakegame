@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Game.h"
+#include "ProfileManager.h"
 
 #include <TFT_eSPI.h>
 
@@ -12,12 +13,17 @@ public:
   bool beginSd();
   void drawBirthdaySplash(bool controllerConnected, uint32_t waitTimeMs);
   void drawStartupSplash(bool controllerConnected, uint32_t waitTimeMs);
-  void draw(const Game& game, bool controllerReady);
+  void draw(const Game& game, bool controllerReady, const ProfileManager& profiles, uint32_t durationSeconds,
+            const char* confirmationMessage);
   void invalidate();
 
 private:
-  void drawBanner(const Game& game, bool controllerReady);
+  void drawBanner(const Game& game, bool controllerReady, const ProfileManager& profiles);
   void drawBoardBackground();
+  void drawReadyOverlay(const ProfileManager& profiles);
+  void drawHighScoresOverlay(const ProfileManager& profiles);
+  void drawGameOverOverlay(const Game& game, const ProfileManager& profiles, uint32_t durationSeconds);
+  void drawConfirmation(const char* message);
   void drawSnake(const Game& game);
   void drawCell(Cell cell, uint16_t color);
   void drawSnakeHead(Cell cell);
@@ -35,10 +41,13 @@ private:
   int previousSnakeLength_;
   Cell previousFood_;
   int previousScore_;
+  char previousPlayer_[PLAYER_NAME_MAX_LEN];
   GameState previousGameState_;
   bool previousControllerReady_;
   bool initialized_;
   bool gameOverModalDrawn_;
+  bool readyOverlayDrawn_;
+  bool highScoresOverlayDrawn_;
   bool sdAvailable_;
   bool bmpSplashDrawn_;
 };

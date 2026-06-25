@@ -37,6 +37,10 @@ void GameInput::begin() {
   ControllerManager::begin();
 }
 
+void GameInput::restoreTouchController() {
+  beginTouchController();
+}
+
 void GameInput::update() {
   // Check controller first
   ControllerCommand command = ControllerManager::consumeCommand();
@@ -70,8 +74,19 @@ void GameInput::update() {
         actionAvailable_ = true; // ACTION_2 -> start/restart
         action_ = ControllerCommand::ACTION_2;
         break;
-      case ControllerCommand::START:
+      case ControllerCommand::ACTION_X:
+        actionAvailable_ = true;
+        action_ = ControllerCommand::ACTION_X;
+        break;
+      case ControllerCommand::ACTION_Y:
+        actionAvailable_ = true;
+        action_ = ControllerCommand::ACTION_Y;
+        break;
       case ControllerCommand::SELECT:
+        actionAvailable_ = true;
+        action_ = ControllerCommand::SELECT;
+        break;
+      case ControllerCommand::START:
         pauseRequested_ = true; // Reserved for menus, but use as pause fallback
         break;
       case ControllerCommand::NONE:

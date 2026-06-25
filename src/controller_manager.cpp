@@ -5,7 +5,6 @@
 #include <Arduino.h>
 #include <bt/uni_bt_allowlist.h>
 #include <bt/uni_bt.h>
-#include <bt/uni_bt_le.h>
 #include <btstack_port_esp32.h>
 #include <btstack_run_loop.h>
 #include <freertos/FreeRTOS.h>
@@ -23,7 +22,7 @@ constexpr uint16_t k8BitDoVendorId = 0x2dc8;
 constexpr uint16_t k8BitDoZero2ProductId = 0x3230;
 
 ControllerSnapshot g_state = {};
-uni_hid_device_t* g_controllers[CONFIG_BLUEPAD32_MAX_DEVICES] = {};
+uni_hid_device_t* g_active_controller = nullptr;
 portMUX_TYPE g_state_mux = portMUX_INITIALIZER_UNLOCKED;
 TaskHandle_t g_btstack_task = nullptr;
 ControllerCommand g_current_command = ControllerCommand::NONE;
@@ -51,37 +50,37 @@ ControllerCommand semanticCommandFromGamepad(const uni_gamepad_t& gp) {
 
   if (gp.buttons & kAction1Mask) return ControllerCommand::ACTION_1;
   if (gp.buttons & kAction2Mask) return ControllerCommand::ACTION_2;
+  if (gp.buttons & BUTTON_X) return ControllerCommand::ACTION_X;
+  if (gp.buttons & BUTTON_Y) return ControllerCommand::ACTION_Y;
   if (gp.misc_buttons & MISC_BUTTON_START) return ControllerCommand::START;
   if (gp.misc_buttons & MISC_BUTTON_SELECT) return ControllerCommand::SELECT;
   return ControllerCommand::NONE;
 }
 
-uint8_t connectedCountUnlocked() {
-  uint8_t count = 0;
-  for (uni_hid_device_t* controller : g_controllers) {
-    if (controller != nullptr) ++count;
+bool claimActiveControllerUnlocked(uni_hid_device_t* d) {
+  if (g_active_controller == nullptr) {
+    g_active_controller = d;
   }
-  return count;
+  return g_active_controller == d;
 }
 
-int findControllerSlot(uni_hid_device_t* d) {
-  for (int i = 0; i < CONFIG_BLUEPAD32_MAX_DEVICES; ++i) {
-    if (g_controllers[i] == d) return i;
-  }
-  return -1;
+void clearCommandsUnlocked() {
+  g_current_command = ControllerCommand::NONE;
+  g_pending_command = ControllerCommand::NONE;
+  g_has_pending_command = false;
+  g_state.command = "NONE";
 }
 
-int claimControllerSlot(uni_hid_device_t* d) {
-  int slot = findControllerSlot(d);
-  if (slot >= 0) return slot;
-
-  for (int i = 0; i < CONFIG_BLUEPAD32_MAX_DEVICES; ++i) {
-    if (g_controllers[i] == nullptr) {
-      g_controllers[i] = d;
-      return i;
-    }
-  }
-  return -1;
+void resetControllerStateUnlocked() {
+  g_active_controller = nullptr;
+  g_state.connected = false;
+  g_state.ready = false;
+  g_state.connected_count = 0;
+  g_state.battery = UNI_CONTROLLER_BATTERY_NOT_AVAILABLE;
+  memset(&g_state.gamepad, 0, sizeof(g_state.gamepad));
+  snprintf(g_state.device_name, sizeof(g_state.device_name), "%s", "(none)");
+  snprintf(g_state.model_name, sizeof(g_state.model_name), "%s", "(none)");
+  clearCommandsUnlocked();
 }
 
 void copyDeviceInfoUnlocked(uni_hid_device_t* d) {
@@ -89,7 +88,7 @@ void copyDeviceInfoUnlocked(uni_hid_device_t* d) {
   g_state.connected = true;
   snprintf(g_state.device_name, sizeof(g_state.device_name), "%s", d->name[0] ? d->name : "(unnamed)");
   snprintf(g_state.model_name, sizeof(g_state.model_name), "%s", model ? model : "(unknown model)");
-  g_state.connected_count = connectedCountUnlocked();
+  g_state.connected_count = 1;
 }
 
 void describeDpad(uint8_t dpad, char* out, size_t len) {
@@ -185,19 +184,11 @@ void maybePrintCommandEvent(const uni_controller_t& ctl, ControllerCommand seman
   have_last_command = true;
 }
 
-void platformInit(int, const char**) {
-  uni_bt_set_gap_security_level(2);
-  Serial.printf("Bluepad32: forcing GAP security level %d for HID pairing.\n", uni_bt_get_gap_security_level());
-
-  if (DEBUG_DISABLE_BLE_ON_BOOT) {
-    Serial.println("Bluepad32: disabling BLE; using BR/EDR HID for 8BitDo Zero 2 DInput mode.");
-    uni_bt_le_set_enabled(false);
-  }
-}
+void platformInit(int, const char**) {}
 
 void platformOnInitComplete() {
   Serial.println("Bluepad32 initialized.");
-  Serial.println("Pair the 8BitDo Zero 2 in D-input/gamepad mode and wait for connection.");
+  Serial.println("Use 8BitDo Zero 2 B+Start / DInput mode, then hold Select for pairing.");
   if (DEBUG_FORGET_BLUETOOTH_KEYS_ON_BOOT) {
     Serial.println("Bluepad32: deleting stored Bluetooth keys before scanning.");
     uni_bt_del_keys_unsafe();
@@ -216,8 +207,12 @@ void platformOnInitComplete() {
     uni_bt_allowlist_add_addr(allowed);
     uni_bt_allowlist_set_enabled(true);
   }
-  Serial.println("Bluepad32: starting scan/autoconnect from BTstack thread.");
-  uni_bt_start_scanning_and_autoconnect_unsafe();
+  if (DEBUG_ENABLE_BLUETOOTH_INQUIRY_AUTOCONNECT) {
+    Serial.println("Bluepad32: starting inquiry/autoconnect from BTstack thread.");
+    uni_bt_start_scanning_and_autoconnect_unsafe();
+  } else {
+    Serial.println("Bluepad32: inquiry/autoconnect disabled; waiting for controller-initiated connection.");
+  }
 }
 
 uni_error_t platformOnDeviceDiscovered(bd_addr_t, const char* name, uint16_t cod, uint8_t rssi) {
@@ -230,45 +225,56 @@ void platformOnDeviceConnected(uni_hid_device_t* d) {
   applyKnownControllerIdentity(d);
 
   portENTER_CRITICAL(&g_state_mux);
-  claimControllerSlot(d);
-  copyDeviceInfoUnlocked(d);
+  const bool active = claimActiveControllerUnlocked(d);
+  if (active) {
+    copyDeviceInfoUnlocked(d);
+    g_state.ready = false;
+    clearCommandsUnlocked();
+  }
   portEXIT_CRITICAL(&g_state_mux);
 
-  Serial.printf("Controller connected: addr=%s name=%s slot_count=%u\n", bd_addr_to_str(d->conn.btaddr),
-                d->name[0] ? d->name : "(unnamed)",
-                ControllerManager::snapshot().connected_count);
+  if (active) {
+    ControllerSnapshot s = ControllerManager::snapshot();
+    Serial.printf("Controller connected: addr=%s name=%s count=%u\n", bd_addr_to_str(d->conn.btaddr),
+                  d->name[0] ? d->name : "(unnamed)", s.connected_count);
+  } else {
+    Serial.printf("Ignoring extra controller: addr=%s name=%s\n", bd_addr_to_str(d->conn.btaddr),
+                  d->name[0] ? d->name : "(unnamed)");
+  }
 }
 
 void platformOnDeviceDisconnected(uni_hid_device_t* d) {
   portENTER_CRITICAL(&g_state_mux);
-  const int slot = findControllerSlot(d);
-  if (slot >= 0) g_controllers[slot] = nullptr;
-  g_state.connected_count = connectedCountUnlocked();
-  if (g_state.connected_count == 0) {
-    g_state.connected = false;
-    g_state.ready = false;
-    g_state.battery = UNI_CONTROLLER_BATTERY_NOT_AVAILABLE;
-    memset(&g_state.gamepad, 0, sizeof(g_state.gamepad));
-    g_state.command = "NONE";
-    snprintf(g_state.device_name, sizeof(g_state.device_name), "%s", "(none)");
-    snprintf(g_state.model_name, sizeof(g_state.model_name), "%s", "(none)");
-    g_current_command = ControllerCommand::NONE;
-    g_pending_command = ControllerCommand::NONE;
-    g_has_pending_command = false;
-  }
+  const bool was_active = (g_active_controller == d);
+  if (was_active) resetControllerStateUnlocked();
+  const uint8_t connected_count = g_state.connected_count;
   portEXIT_CRITICAL(&g_state_mux);
 
   Serial.printf("Controller disconnected: addr=%s connected_count=%u\n", bd_addr_to_str(d->conn.btaddr),
-                ControllerManager::snapshot().connected_count);
+                connected_count);
+  if (was_active && DEBUG_ENABLE_BLUETOOTH_INQUIRY_AUTOCONNECT) {
+    Serial.println("Bluepad32: active controller disconnected; restarting scan/autoconnect.");
+    uni_bt_start_scanning_and_autoconnect_unsafe();
+  }
 }
 
 uni_error_t platformOnDeviceReady(uni_hid_device_t* d) {
+  applyKnownControllerIdentity(d);
+
   portENTER_CRITICAL(&g_state_mux);
-  claimControllerSlot(d);
-  copyDeviceInfoUnlocked(d);
-  g_state.ready = true;
-  g_state.battery = d->controller.battery;
+  const bool active = claimActiveControllerUnlocked(d);
+  if (active) {
+    copyDeviceInfoUnlocked(d);
+    g_state.ready = true;
+    g_state.battery = d->controller.battery;
+  }
   portEXIT_CRITICAL(&g_state_mux);
+
+  if (!active) {
+    Serial.printf("Extra controller ready but not active: addr=%s name=%s\n", bd_addr_to_str(d->conn.btaddr),
+                  d->name[0] ? d->name : "(unnamed)");
+    return UNI_ERROR_SUCCESS;
+  }
 
   ControllerSnapshot s = ControllerManager::snapshot();
   Serial.printf("Controller ready: addr=%s model=%s name=%s vid=0x%04x pid=0x%04x battery=%s count=%u\n",
@@ -285,21 +291,25 @@ void platformOnControllerData(uni_hid_device_t* d, uni_controller_t* ctl) {
   const ControllerCommand command = semanticCommandFromGamepad(ctl->gamepad);
 
   portENTER_CRITICAL(&g_state_mux);
-  claimControllerSlot(d);
-  copyDeviceInfoUnlocked(d);
-  g_state.ready = true;
-  g_state.battery = ctl->battery;
-  g_state.gamepad = ctl->gamepad;
-  if (command != ControllerCommand::NONE && command != g_current_command) {
-    g_current_command = command;
-    g_pending_command = command;
-    g_has_pending_command = true;
-  } else if (command == ControllerCommand::NONE) {
-    g_current_command = ControllerCommand::NONE;
+  const bool active = claimActiveControllerUnlocked(d);
+  if (active) {
+    copyDeviceInfoUnlocked(d);
+    g_state.ready = true;
+    g_state.battery = ctl->battery;
+    g_state.gamepad = ctl->gamepad;
+    if (command != ControllerCommand::NONE && command != g_current_command) {
+      g_current_command = command;
+      g_pending_command = command;
+      g_has_pending_command = true;
+    } else if (command == ControllerCommand::NONE) {
+      g_current_command = ControllerCommand::NONE;
+    }
+    g_state.command = ControllerManager::commandText(g_current_command);
   }
-  g_state.command = ControllerManager::commandText(g_current_command);
   ControllerSnapshot snapshot = g_state;
   portEXIT_CRITICAL(&g_state_mux);
+
+  if (!active) return;
 
   maybePrintCommandEvent(*ctl, g_current_command);
 
@@ -355,22 +365,15 @@ void ControllerManager::btstackTask(void*) {
 }
 
 void ControllerManager::begin() {
-  portENTER_CRITICAL(&g_state_mux);
-  memset(&g_state, 0, sizeof(g_state));
-  memset(g_controllers, 0, sizeof(g_controllers));
-  g_state.command = "NONE";
-  g_state.battery = UNI_CONTROLLER_BATTERY_NOT_AVAILABLE;
-  snprintf(g_state.device_name, sizeof(g_state.device_name), "%s", "(none)");
-  snprintf(g_state.model_name, sizeof(g_state.model_name), "%s", "(none)");
-  g_current_command = ControllerCommand::NONE;
-  g_pending_command = ControllerCommand::NONE;
-  g_has_pending_command = false;
-  portEXIT_CRITICAL(&g_state_mux);
-
   if (g_btstack_task != nullptr) {
     Serial.println("ControllerManager::begin: BTstack service task already exists.");
     return;
   }
+
+  portENTER_CRITICAL(&g_state_mux);
+  memset(&g_state, 0, sizeof(g_state));
+  resetControllerStateUnlocked();
+  portEXIT_CRITICAL(&g_state_mux);
 
   Serial.println("ControllerManager::begin: creating BTstack service task.");
   const BaseType_t created =
@@ -453,6 +456,10 @@ const char* ControllerManager::commandText(ControllerCommand command) {
       return "ACTION_1";
     case ControllerCommand::ACTION_2:
       return "ACTION_2";
+    case ControllerCommand::ACTION_X:
+      return "ACTION_X";
+    case ControllerCommand::ACTION_Y:
+      return "ACTION_Y";
     case ControllerCommand::START:
       return "START";
     case ControllerCommand::SELECT:

@@ -11,6 +11,7 @@ public:
   explicit GameInput(TFT_eSPI& tft);
 
   void begin();
+  void restoreTouchController();
   void update();
   void suppressTouchUntilRelease();
 

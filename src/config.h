@@ -66,6 +66,10 @@ constexpr uint32_t TICK_DECREASE_PER_FOOD_MS = 20;
 constexpr uint32_t STARTUP_SPLASH_MS = 3000;
 constexpr uint32_t BIRTHDAY_SPLASH_TIMEOUT_MS = 60000;
 constexpr uint32_t STARTUP_CONTROLLER_WAIT_MS = 60000;
+constexpr uint32_t PLAYER_HOTKEY_WINDOW_MS = 2000;
+constexpr uint32_t PLAYER_CONFIRMATION_MS = 1500;
+constexpr uint8_t PLAYER_HOTKEY_PRESS_COUNT = 3;
+constexpr uint32_t GAME_OVER_INPUT_LOCKOUT_MS = 2000;
 constexpr int MAX_SNAKE_LENGTH = BOARD_COLS * BOARD_ROWS;
 
 constexpr bool DEBUG_RENDER_REDRAWS = false;
@@ -73,10 +77,10 @@ constexpr bool DEBUG_LOG_RENDER_DRAWS = false;
 constexpr bool DEBUG_DISABLE_TOUCH_POLLING = false;
 constexpr bool DEBUG_DISABLE_GAME_RENDER = false;
 constexpr bool DEBUG_REASSERT_BACKLIGHT = false;
-constexpr bool DEBUG_FORGET_BLUETOOTH_KEYS_ON_BOOT = false;
-constexpr bool DEBUG_DISABLE_BLE_ON_BOOT = true;
+constexpr bool DEBUG_FORGET_BLUETOOTH_KEYS_ON_BOOT = true;
 constexpr bool DEBUG_ENABLE_BLUETOOTH_ALLOWLIST = false;
-constexpr uint8_t DEBUG_BLUETOOTH_ALLOWLIST_ADDR[6] = {0xE4, 0x17, 0xD8, 0x7D, 0x1A, 0xFA};
+constexpr bool DEBUG_ENABLE_BLUETOOTH_INQUIRY_AUTOCONNECT = false;
+constexpr uint8_t DEBUG_BLUETOOTH_ALLOWLIST_ADDR[6] = {0xE4, 0x17, 0xD8, 0x7A, 0x1C, 0xFA};
 constexpr uint32_t DEBUG_BACKLIGHT_REASSERT_MS = 250;
 
 constexpr uint16_t TOUCH_THRESHOLD = 80;

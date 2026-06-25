@@ -3,6 +3,7 @@
 #include <Arduino.h>
 #include <SPI.h>
 #include <SD.h>
+#include <string.h>
 
 static SPIClass sdSpi(VSPI);
 
@@ -110,8 +111,11 @@ Renderer::Renderer(TFT_eSPI& tft)
       previousControllerReady_(false),
       initialized_(false),
       gameOverModalDrawn_(false),
+      readyOverlayDrawn_(false),
+      highScoresOverlayDrawn_(false),
       sdAvailable_(false),
       bmpSplashDrawn_(false) {
+  previousPlayer_[0] = '\0';
 }
 
 void Renderer::begin() {
@@ -156,19 +160,24 @@ void Renderer::drawStartupSplash(bool controllerConnected, uint32_t waitTimeMs) 
   initialized_ = false;
 }
 
-void Renderer::draw(const Game& game, bool controllerReady) {
+void Renderer::draw(const Game& game, bool controllerReady, const ProfileManager& profiles, uint32_t durationSeconds,
+                    const char* confirmationMessage) {
   // Full redraw on state change
-  if (!initialized_ || previousGameState_ != game.state() || previousControllerReady_ != controllerReady) {
+  const bool playerChanged = strcmp(previousPlayer_, profiles.currentPlayerName()) != 0;
+  if (!initialized_ || previousGameState_ != game.state() || previousControllerReady_ != controllerReady ||
+      playerChanged) {
     tft_.fillScreen(TFT_BLACK);
     drawBoardBackground();
     previousSnakeLength_ = 0;
     previousFood_ = {-1, -1};
     previousScore_ = -1;
     gameOverModalDrawn_ = false;
+    readyOverlayDrawn_ = false;
+    highScoresOverlayDrawn_ = false;
   }
 
   // Draw banner
-  drawBanner(game, controllerReady);
+  drawBanner(game, controllerReady, profiles);
 
   // Clear old snake cells and food
   if (!sameCell(previousFood_, game.food())) {
@@ -197,6 +206,7 @@ void Renderer::draw(const Game& game, bool controllerReady) {
     previousSnake_[i] = snake[i];
   }
   previousScore_ = game.score();
+  snprintf(previousPlayer_, sizeof(previousPlayer_), "%s", profiles.currentPlayerName());
   previousGameState_ = game.state();
   previousControllerReady_ = controllerReady;
 
@@ -205,20 +215,24 @@ void Renderer::draw(const Game& game, bool controllerReady) {
 
   initialized_ = true; // Mark as initialized after the first full draw pass
 
+  if (game.state() == GameState::Ready && !readyOverlayDrawn_) {
+    drawReadyOverlay(profiles);
+    readyOverlayDrawn_ = true;
+  }
+
+  if (game.state() == GameState::HighScores && !highScoresOverlayDrawn_) {
+    drawHighScoresOverlay(profiles);
+    highScoresOverlayDrawn_ = true;
+  }
+
   // At game end, display a game end banner modal (drawn once per GameOver entry)
   if (game.state() == GameState::GameOver && !gameOverModalDrawn_) {
-    const int bw = 240;
-    const int bh = 90;
-    const int bx = (SCREEN_WIDTH - bw) / 2;
-    const int by = BOARD_Y + (BOARD_HEIGHT - bh) / 2;
-
-    tft_.fillRect(bx, by, bw, bh, TFT_BLACK);
-    tft_.drawRect(bx, by, bw, bh, TFT_RED);
-    tft_.drawRect(bx + 2, by + 2, bw - 4, bh - 4, TFT_RED);
-
-    renderGFXString(tft_, "GAME OVER", bx + bw / 2, by + 35, &FreeSansBold12pt7b, TFT_WHITE, TC_DATUM);
-    renderGFXString(tft_, "Press any button to Restart", bx + bw / 2, by + 65, &FreeSans9pt7b, TFT_YELLOW, TC_DATUM);
+    drawGameOverOverlay(game, profiles, durationSeconds);
     gameOverModalDrawn_ = true;
+  }
+
+  if (confirmationMessage != nullptr && confirmationMessage[0] != '\0') {
+    drawConfirmation(confirmationMessage);
   }
 }
 
@@ -226,19 +240,22 @@ void Renderer::invalidate() {
   initialized_ = false;
 }
 
-void Renderer::drawBanner(const Game& game, bool controllerReady) {
+void Renderer::drawBanner(const Game& game, bool controllerReady, const ProfileManager& profiles) {
   // Redraw full banner background only if state changed or first pass
-  bool stateChanged = !initialized_ || previousGameState_ != game.state() || previousControllerReady_ != controllerReady;
+  bool stateChanged = !initialized_ || previousGameState_ != game.state() ||
+                      previousControllerReady_ != controllerReady ||
+                      strcmp(previousPlayer_, profiles.currentPlayerName()) != 0;
   
   if (stateChanged) {
       tft_.fillRect(0, 0, SCREEN_WIDTH, BANNER_HEIGHT, TFT_NAVY);
       tft_.drawLine(0, BANNER_HEIGHT - 1, SCREEN_WIDTH - 1, BANNER_HEIGHT - 1, TFT_RED);
       
-      // 1. BT Status
-      renderGFXString(tft_, controllerReady ? "BT:OK" : "BT:--", 5, BANNER_HEIGHT / 2, &FreeSans9pt7b, 
+      char playerBuf[12];
+      snprintf(playerBuf, sizeof(playerBuf), "P:%s", profiles.compactPlayerName());
+      renderGFXString(tft_, playerBuf, 5, BANNER_HEIGHT / 2, &FreeSans9pt7b,
                       controllerReady ? TFT_GREEN : TFT_ORANGE, ML_DATUM);
 
-      // 2. Game state in center
+      // 1. Game state in center
       const char* stateStr = getGameStateString(game.state());
       uint16_t stateColor = TFT_WHITE;
       if (game.state() == GameState::Pause) stateColor = TFT_YELLOW;
@@ -248,15 +265,113 @@ void Renderer::drawBanner(const Game& game, bool controllerReady) {
       renderGFXString(tft_, stateStr, SCREEN_WIDTH / 2, BANNER_HEIGHT / 2, &FreeSans9pt7b, stateColor, MC_DATUM);
   }
 
-  // 3. Score right justified - Only redraw if it changed OR the banner was just cleared
+  // 2. Score right justified - Only redraw if it changed OR the banner was just cleared
   if (stateChanged || previousScore_ != game.score()) {
       // GFX fonts are transparent, so we must clear the score area in the navy banner
       tft_.fillRect(SCREEN_WIDTH - 100, 0, 100, BANNER_HEIGHT - 1, TFT_NAVY);
+      if (game.state() == GameState::HighScores) return;
       
       char scoreBuf[16];
       snprintf(scoreBuf, sizeof(scoreBuf), "Score: %d", game.score());
       renderGFXString(tft_, scoreBuf, SCREEN_WIDTH - 5, BANNER_HEIGHT / 2, &FreeSans9pt7b, TFT_CYAN, MR_DATUM);
   }
+}
+
+void Renderer::drawReadyOverlay(const ProfileManager& profiles) {
+  const int bx = 18;
+  const int by = BOARD_Y + 18;
+  const int bw = SCREEN_WIDTH - 36;
+  const int bh = 170;
+
+  tft_.fillRect(bx, by, bw, bh, TFT_BLACK);
+  tft_.drawRect(bx, by, bw, bh, TFT_DARKCYAN);
+  renderGFXString(tft_, "SNAKE", bx + bw / 2, by + 28, &FreeSansBold12pt7b, TFT_GREENYELLOW, TC_DATUM);
+
+  char playerBuf[32];
+  snprintf(playerBuf, sizeof(playerBuf), "PLAYER: %s", profiles.currentPlayerName());
+  renderGFXString(tft_, playerBuf, bx + bw / 2, by + 55, &FreeSans9pt7b, TFT_CYAN, TC_DATUM);
+
+  renderGFXString(tft_, "HIGH SCORES", bx + bw / 2, by + 82, &FreeSans9pt7b, TFT_YELLOW, TC_DATUM);
+
+  if (profiles.scoreCount() == 0) {
+    renderGFXString(tft_, "No scores yet", bx + bw / 2, by + 112, &FreeSans9pt7b, TFT_WHITE, TC_DATUM);
+  } else {
+    const uint8_t rows = profiles.scoreCount() < 4 ? profiles.scoreCount() : 4;
+    for (uint8_t i = 0; i < rows; ++i) {
+      const HighScoreEntry& score = profiles.scoreAt(i);
+      char timeBuf[8];
+      char row[64];
+      ProfileManager::formatDuration(score.durationSeconds, timeBuf, sizeof(timeBuf));
+      snprintf(row, sizeof(row), "%u %s  %d  %s  L:%d",
+               static_cast<unsigned>(i + 1), score.player, score.score, timeBuf, score.snakeLength);
+      renderGFXString(tft_, row, bx + 14, by + 107 + i * 18, &FreeSans9pt7b, TFT_WHITE, ML_DATUM);
+    }
+  }
+}
+
+void Renderer::drawHighScoresOverlay(const ProfileManager& profiles) {
+  tft_.fillRect(BOARD_X, BOARD_Y, BOARD_WIDTH, BOARD_HEIGHT, TFT_BLACK);
+  tft_.drawRect(BOARD_X, BOARD_Y, BOARD_WIDTH, BOARD_HEIGHT, TFT_DARKCYAN);
+
+  renderGFXString(tft_, "TOP 10 SCORES", SCREEN_WIDTH / 2, BOARD_Y + 22, &FreeSansBold12pt7b, TFT_YELLOW, TC_DATUM);
+  renderGFXString(tft_, "# PLAYER SCORE TIME LEN", 12, BOARD_Y + 48, &FreeSans9pt7b, TFT_CYAN, ML_DATUM);
+  tft_.drawLine(8, BOARD_Y + 58, SCREEN_WIDTH - 8, BOARD_Y + 58, TFT_DARKCYAN);
+
+  if (profiles.scoreCount() == 0) {
+    renderGFXString(tft_, "No scores yet", SCREEN_WIDTH / 2, BOARD_Y + 115, &FreeSans9pt7b, TFT_WHITE, TC_DATUM);
+    renderGFXString(tft_, "Press SELECT or START", SCREEN_WIDTH / 2, BOARD_Y + 145, &FreeSans9pt7b, TFT_GREEN, TC_DATUM);
+    return;
+  }
+
+  const uint8_t rows = profiles.scoreCount() < MAX_HIGH_SCORES ? profiles.scoreCount() : MAX_HIGH_SCORES;
+  for (uint8_t i = 0; i < rows; ++i) {
+    const HighScoreEntry& score = profiles.scoreAt(i);
+    char timeBuf[8];
+    char row[64];
+    ProfileManager::formatDuration(score.durationSeconds, timeBuf, sizeof(timeBuf));
+    snprintf(row, sizeof(row), "%2u %-7s %4d %5s %3d",
+             static_cast<unsigned>(i + 1), score.player, score.score, timeBuf, score.snakeLength);
+    renderGFXString(tft_, row, 12, BOARD_Y + 72 + i * 14, &FreeSans9pt7b, TFT_WHITE, ML_DATUM);
+  }
+
+  renderGFXString(tft_, "SELECT/START: BACK", SCREEN_WIDTH / 2, SCREEN_HEIGHT - 8, &FreeSans9pt7b, TFT_GREEN, BC_DATUM);
+}
+
+void Renderer::drawGameOverOverlay(const Game& game, const ProfileManager& profiles, uint32_t durationSeconds) {
+  const int bw = 252;
+  const int bh = 150;
+  const int bx = (SCREEN_WIDTH - bw) / 2;
+  const int by = BOARD_Y + (BOARD_HEIGHT - bh) / 2;
+  char timeBuf[8];
+  char row[48];
+
+  ProfileManager::formatDuration(durationSeconds, timeBuf, sizeof(timeBuf));
+
+  tft_.fillRect(bx, by, bw, bh, TFT_BLACK);
+  tft_.drawRect(bx, by, bw, bh, TFT_RED);
+  tft_.drawRect(bx + 2, by + 2, bw - 4, bh - 4, TFT_RED);
+
+  renderGFXString(tft_, "GAME OVER", bx + bw / 2, by + 27, &FreeSansBold12pt7b, TFT_WHITE, TC_DATUM);
+  snprintf(row, sizeof(row), "PLAYER: %s", profiles.currentPlayerName());
+  renderGFXString(tft_, row, bx + bw / 2, by + 52, &FreeSans9pt7b, TFT_CYAN, TC_DATUM);
+  snprintf(row, sizeof(row), "SCORE: %d", game.score());
+  renderGFXString(tft_, row, bx + 22, by + 78, &FreeSans9pt7b, TFT_YELLOW, ML_DATUM);
+  snprintf(row, sizeof(row), "TIME: %s", timeBuf);
+  renderGFXString(tft_, row, bx + 132, by + 78, &FreeSans9pt7b, TFT_YELLOW, ML_DATUM);
+  snprintf(row, sizeof(row), "LENGTH: %d", game.snakeLength());
+  renderGFXString(tft_, row, bx + bw / 2, by + 105, &FreeSans9pt7b, TFT_WHITE, TC_DATUM);
+  renderGFXString(tft_, "Press action to restart", bx + bw / 2, by + 132, &FreeSans9pt7b, TFT_GREEN, TC_DATUM);
+}
+
+void Renderer::drawConfirmation(const char* message) {
+  const int bw = 270;
+  const int bh = 54;
+  const int bx = (SCREEN_WIDTH - bw) / 2;
+  const int by = BOARD_Y + 8;
+
+  tft_.fillRect(bx, by, bw, bh, TFT_BLACK);
+  tft_.drawRect(bx, by, bw, bh, TFT_YELLOW);
+  renderGFXString(tft_, message, bx + bw / 2, by + 35, &FreeSans9pt7b, TFT_YELLOW, TC_DATUM);
 }
 
 void Renderer::drawBoardBackground() {
@@ -500,6 +615,8 @@ const char* Renderer::getGameStateString(GameState state) const {
       return "PAUSE";
     case GameState::GameOver:
       return "OVER";
+    case GameState::HighScores:
+      return "SCORES";
     default:
       return "????";
   }

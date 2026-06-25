@@ -39,7 +39,7 @@ void Game::restart(Direction initialDirection) {
 }
 
 bool Game::update() {
-  if (gameOver_ || state_ == GameState::Pause || state_ == GameState::Ready) {
+  if (gameOver_ || state_ == GameState::Pause || state_ == GameState::Ready || state_ == GameState::HighScores) {
     return false;
   }
 
